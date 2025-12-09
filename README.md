@@ -46,7 +46,7 @@ graph TD
 
 ### Prerequisites
 
-- .NET 9 SDK
+- .NET 8 SDK
 - Docker
 
 ### Run with Dotnet
