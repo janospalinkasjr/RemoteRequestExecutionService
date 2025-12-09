@@ -52,7 +52,7 @@ graph TD
 ### Run with Dotnet
 
 ```bash
-dotnet run --project src/RemoteRequestExecutionService
+dotnet run --project src/RemoteExec.Api
 ```
 
 ### Run with Docker

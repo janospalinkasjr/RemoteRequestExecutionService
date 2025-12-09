@@ -13,7 +13,7 @@ The testing strategy focuses on strict unit testing for the complex logic (Resil
 | Network Timeout     | HTTP       | Failed (eventually) | Yes        | Configured Max | AttemptCount = Max + 1               |
 | Allowlisted Command | PowerShell | Success             | No         | 0              | Output contains expected string      |
 | Arbitrary Command   | PowerShell | Failed (Validation) | No         | 0              | Error "Not allowlisted"              |
-| API Ping            | N/A        | Success ("pont")    | No         | 0              | Body == "pong"                       |
+| API Ping            | N/A        | Success ("pong")    | No         | 0              | Body == "pong"                       |
 
 ## Unit Test Suites
 
