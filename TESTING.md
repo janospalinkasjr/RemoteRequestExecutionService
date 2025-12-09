@@ -13,7 +13,7 @@ The testing strategy focuses on strict unit testing for the complex logic (Resil
 | Network Timeout     | HTTP       | Failed (eventually) | Yes        | Configured Max | AttemptCount = Max + 1               |
 | Allowlisted Command | PowerShell | Success             | No         | 0              | Output contains expected string      |
 | Arbitrary Command   | PowerShell | Failed (Validation) | No         | 0              | Error "Not allowlisted"              |
-| API Ping            | N/A        | Success ("pong")    | No         | 0              | Body == "pong"                       |
+| API Ping            | N/A        | Success ("pont")    | No         | 0              | Body == "pong"                       |
 
 ## Unit Test Suites
 
@@ -49,6 +49,28 @@ The following test suites provide high code coverage for core components:
   - **Integration**: Mocks all dependencies (`IExecutor`, `IResiliencePolicy`, etc.) to verify interaction.
   - **Resilience**: Simulates policy callbacks to verify retry tracking (`TotalAttempts`, `AttemptOutcomes`).
   - **Routing**: Verifies correct Executor selection based on request type.
+
+### [CircuitBreakerTests]
+
+- **Scope**: `CustomResiliencePolicy` (Circuit Breaker Logic).
+- **Coverage**:
+  - **State Transitions**: Closed -> Survivor -> Open -> HalfOpen -> Closed.
+  - **Thresholds**: Verifies failure counts trip the breaker.
+  - **Timers**: Verifies duration expiration transitions to Half-Open.
+
+### [LogSanitizerTests]
+
+- **Scope**: `LogSanitizer` class.
+- **Coverage**:
+  - **Redaction**: Verifies `Authorization` headers and `password` JSON fields are replaced with `***REDACTED***`.
+  - **Safety**: Ensures non-sensitive logs are preserved.
+
+### [PowerShellRemoteTests]
+
+- **Scope**: `PowerShellExecutor` (Remote Logic).
+- **Coverage**:
+  - **Connection**: Verifies `WSManConnectionInfo` is initialized when `computerName` is present.
+  - **Fallback**: Verifies correct handling (or expected failure) when remote target is unreachable, ensuring logic path is exercised.
 
 ## Coverage Rationale
 

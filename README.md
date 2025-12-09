@@ -46,7 +46,7 @@ graph TD
 
 ### Prerequisites
 
-- .NET 8 SDK
+- .NET 9 SDK
 - Docker
 
 ### Run with Dotnet
@@ -72,8 +72,12 @@ curl -X POST http://localhost:8080/api/http \
 
 ## Security & Limitations
 
-- **Secrets**: The current implementation does not implicitly scrub secrets from logs beyond standard ASP.NET Core filtering. In a real system, a dedicated scrubbing sink for Serilog would be added.
-- **PowerShell**: Running PowerShell inside Linux containers has limitations compared to Windows.
+- **Secrets**: Log scrubbing is implemented via `LogSanitizer`, masking `Authorization` headers and `password` JSON fields.
+- **Input Limits**: Max request body size is limited to 10MB (configurable) to prevent DoS.
+- **PowerShell**:
+  - Supports local isolated Runspaces.
+  - Supports Remote Sessions via WSMan (requires valid target).
+  - Strict Allowlist for commands.
 
 ## "If I had more time..."
 
