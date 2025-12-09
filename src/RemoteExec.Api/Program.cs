@@ -9,6 +9,13 @@ var builder = WebApplication.CreateBuilder(args);
 // Configuration
 builder.Services.Configure<ResilienceConfig>(builder.Configuration.GetSection("Resilience"));
 
+// Security Limits
+var maxBodySize = builder.Configuration.GetValue<long?>("Security:MaxRequestBodySize") ?? 30000000; // Default ~30MB
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = maxBodySize;
+});
+
 // Core Services
 builder.Services.AddHttpClient("UniversalClient");
 builder.Services.AddSingleton<IMetricsCollector, InMemoryMetricsCollector>();
