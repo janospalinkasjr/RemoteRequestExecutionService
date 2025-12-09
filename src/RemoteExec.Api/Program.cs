@@ -1,41 +1,65 @@
+using RemoteExec.Api.Configuration;
+using RemoteExec.Api.Core.Interfaces;
+using RemoteExec.Api.Infrastructure.Executors;
+using RemoteExec.Api.Infrastructure.Resilience;
+using RemoteExec.Api.Infrastructure.Services;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+// Configuration
+builder.Services.Configure<ResilienceConfig>(builder.Configuration.GetSection("Resilience"));
+
+// Core Services
+builder.Services.AddHttpClient("UniversalClient");
+builder.Services.AddSingleton<IMetricsCollector, InMemoryMetricsCollector>();
+builder.Services.AddSingleton<IResiliencePolicy, CustomResiliencePolicy>();
+
+// Executors (Registered as IExecutor)
+builder.Services.AddSingleton<IExecutor, HttpExecutor>();
+builder.Services.AddSingleton<IExecutor, PowerShellExecutor>();
+
+// Orchestrator
+builder.Services.AddSingleton<IRequestOrchestrator, RequestOrchestrator>();
+
+// Controllers
+builder.Services.AddControllers();
+
+// Logging
+builder.Services.AddLogging(logging => 
+{
+    logging.ClearProviders();
+    logging.AddConsole();
+    logging.AddDebug();
+});
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
+// Middleware
+app.Use(async (context, next) =>
 {
-    app.MapOpenApi();
-}
+    // Correlation ID
+    if (!context.Request.Headers.TryGetValue("X-Correlation-ID", out var correlationId))
+    {
+        correlationId = Guid.NewGuid().ToString();
+        context.Request.Headers["X-Correlation-ID"] = correlationId;
+    }
+    
+    // Add to Response
+    context.Response.OnStarting(() => {
+        context.Response.Headers["X-Correlation-ID"] = correlationId;
+        return Task.CompletedTask;
+    });
 
-app.UseHttpsRedirection();
+    // Logging Scope
+    using (app.Logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId.ToString() }))
+    {
+        await next();
+    }
+});
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast");
+app.UseRouting();
+app.MapControllers();
 
 app.Run();
 
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
+public partial class Program { }
