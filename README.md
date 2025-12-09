@@ -77,5 +77,4 @@ curl -X POST http://localhost:8080/api/http \
 
 ## "If I had more time..."
 
-- Implement Circuit Breaker pattern to stop calls to failing upstreams entirely.
 - Add Authentication (JWT) to the Proxy.
