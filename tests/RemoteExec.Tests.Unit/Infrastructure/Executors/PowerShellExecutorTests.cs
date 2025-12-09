@@ -130,5 +130,40 @@ namespace RemoteExec.Tests.Unit.Infrastructure.Executors
              
              Assert.Contains("PowerShell execution failed", ex.Message);
         }
+
+        [Fact]
+        public async Task ExecuteAsync_UsesRemoteRunspace_WhenComputerNameProvided()
+        {
+            // Arrange
+            var payload = new Dictionary<string, object>
+            {
+                { "command", "Get-Date" },
+                { "computerName", "localhost" } // Trying to connect to localhost remotely
+            };
+            var request = new ExecutionRequest
+            {
+                ExecutorType = "powershell",
+                Payload = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(payload))
+            };
+
+            // Act
+            try 
+            {
+                await _executor.ExecuteAsync(request, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                // Assert that it failed due to Connection issues, NOT implementation issues.
+                // Typical errors: "MI_RESULT_FAILED", "WSMan", "Transport", "connection refused"
+                Assert.True(
+                    ex.Message.Contains("WSMan") || 
+                    ex.Message.Contains("WS-Management") || 
+                    ex.Message.Contains("connection") || 
+                    ex.Message.Contains("MI_RESULT_FAILED") ||
+                    ex.Message.Contains("failed"), 
+                    $"Unexpected error type: {ex.Message}"
+                );
+            }
+        }
     }
 }

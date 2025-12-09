@@ -10,8 +10,6 @@ namespace RemoteExec.Api.Infrastructure.Executors
     {
         public string Name => "powershell";
         private readonly ILogger<PowerShellExecutor> _logger;
-        
-        // Allowed commands for security (Command Allowlist)
         private readonly HashSet<string> _allowedCommands = new(StringComparer.OrdinalIgnoreCase)
         {
             "Get-Process",
@@ -46,7 +44,23 @@ namespace RemoteExec.Api.Infrastructure.Executors
                 var sessionState = InitialSessionState.CreateDefault();
 
                 // Session Lifecycle: Create -> Connect (Implicit in Runspace) -> Run -> Dispose
-                using (var runspace = RunspaceFactory.CreateRunspace(sessionState))
+                // Create Runspace: Remote vs Local
+                Runspace runspace;
+                if (request.Payload.TryGetProperty("computerName", out var computerProp) && !string.IsNullOrWhiteSpace(computerProp.GetString()))
+                {
+                     var computerName = computerProp.GetString();
+                     var connectionInfo = new WSManConnectionInfo(new Uri($"http://{computerName}:5985/wsman"));
+                     // Note: Authentication is complex. Defaulting to Default credentials.
+                     // In a real scenario, we'd extract credentials from context or vault.
+                     runspace = RunspaceFactory.CreateRunspace(connectionInfo);
+                }
+                else
+                {
+                    // Local Isolated Session
+                    runspace = RunspaceFactory.CreateRunspace(sessionState);
+                }
+
+                try
                 {
                     runspace.Open();
                     
@@ -64,7 +78,11 @@ namespace RemoteExec.Api.Infrastructure.Executors
                             }
                         }
 
-                        // Execute command asynchronously
+                        // Execute
+                        // Note: PowerShell.InvokeAsync is not cancellable in older versions, 
+                        // but .NET Core version supports Stop() via another thread or just async wrapping.
+                        // Ideally use InvokeAsync().
+                        
                         var psOutput = await Task.Factory.FromAsync(
                             ps.BeginInvoke(), 
                             ps.EndInvoke
@@ -86,12 +104,14 @@ namespace RemoteExec.Api.Infrastructure.Executors
                             {
                                 result.ErrorMessages.Add(err.ToString());
                             }
-
+                            // Treat as failure
                             throw new Exception($"PowerShell execution failed: {string.Join("; ", result.ErrorMessages)}");
                         }
                     }
-                    
-                    runspace.Close();
+                }
+                finally
+                {
+                    runspace.Dispose();
                 }
                 
                 result.EndTimeUtc = DateTime.UtcNow;
