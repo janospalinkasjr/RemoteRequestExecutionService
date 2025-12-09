@@ -1,7 +1,6 @@
-using System.Text.Json;
 using RemoteExec.Api.Core.Models;
 
-namespace RemoteRequestExecutionService.Core.Interfaces
+namespace RemoteExec.Api.Core.Interfaces
 {
     public interface IExecutor
     {
