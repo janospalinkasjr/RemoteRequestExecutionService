@@ -1,5 +1,4 @@
 using RemoteExec.Api.Infrastructure.Services;
-using Xunit;
 
 namespace RemoteExec.Tests.Unit.Infrastructure.Services
 {
@@ -96,11 +95,11 @@ namespace RemoteExec.Tests.Unit.Infrastructure.Services
         [Fact]
         public void GetSnapshot_ReturnsEmpty_WhenNoMetrics()
         {
-             // Act
-             var snapshot = (Dictionary<string, object>)_collector.GetSnapshot();
+            // Act
+            var snapshot = (Dictionary<string, object>)_collector.GetSnapshot();
 
-             // Assert
-             Assert.Empty(snapshot);
+            // Assert
+            Assert.Empty(snapshot);
         }
     }
 }

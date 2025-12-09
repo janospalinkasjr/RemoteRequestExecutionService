@@ -3,7 +3,6 @@ using RemoteExec.Api.Core.Models;
 using RemoteExec.Api.Infrastructure.Services;
 using Moq;
 using Microsoft.Extensions.Logging;
-using Xunit;
 
 namespace RemoteExec.Tests.Unit.Infrastructure.Services
 {
@@ -150,7 +149,7 @@ namespace RemoteExec.Tests.Unit.Infrastructure.Services
             };
 
             // Setup Resilience Policy to bubble up exception
-             _mockResiliencePolicy.Setup(p => p.ExecuteAsync(
+            _mockResiliencePolicy.Setup(p => p.ExecuteAsync(
                 It.IsAny<Func<CancellationToken, Task<ExecutionResult>>>(), 
                 It.IsAny<CancellationToken>()))
                 .Returns<Func<CancellationToken, Task<ExecutionResult>>, CancellationToken>(

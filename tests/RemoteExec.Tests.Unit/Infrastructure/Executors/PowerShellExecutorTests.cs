@@ -1,10 +1,8 @@
-using System.Collections;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Moq;
 using RemoteExec.Api.Core.Models;
 using RemoteExec.Api.Infrastructure.Executors;
-using Xunit;
 
 namespace RemoteExec.Tests.Unit.Infrastructure.Executors
 {
@@ -125,10 +123,10 @@ namespace RemoteExec.Tests.Unit.Infrastructure.Executors
             };
 
             // Act & Assert
-             var ex = await Assert.ThrowsAsync<Exception>(() => 
+            var ex = await Assert.ThrowsAsync<Exception>(() => 
                 _executor.ExecuteAsync(request, CancellationToken.None));
-             
-             Assert.Contains("PowerShell execution failed", ex.Message);
+            
+            Assert.Contains("PowerShell execution failed", ex.Message);
         }
 
         [Fact]
@@ -138,7 +136,7 @@ namespace RemoteExec.Tests.Unit.Infrastructure.Executors
             var payload = new Dictionary<string, object>
             {
                 { "command", "Get-Date" },
-                { "computerName", "localhost" } // Trying to connect to localhost remotely
+                { "computerName", "localhost" }
             };
             var request = new ExecutionRequest
             {
@@ -146,15 +144,13 @@ namespace RemoteExec.Tests.Unit.Infrastructure.Executors
                 Payload = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(payload))
             };
 
-            // Act
+            // Act & Assert
             try 
             {
                 await _executor.ExecuteAsync(request, CancellationToken.None);
             }
             catch (Exception ex)
             {
-                // Assert that it failed due to Connection issues, NOT implementation issues.
-                // Typical errors: "MI_RESULT_FAILED", "WSMan", "Transport", "connection refused"
                 Assert.True(
                     ex.Message.Contains("WSMan") || 
                     ex.Message.Contains("WS-Management") || 

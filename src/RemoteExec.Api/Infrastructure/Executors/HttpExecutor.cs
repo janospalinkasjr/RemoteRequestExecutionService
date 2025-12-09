@@ -26,7 +26,7 @@ namespace RemoteExec.Api.Infrastructure.Executors
                 if (!request.Payload.TryGetProperty("url", out var urlProp) || 
                     !request.Payload.TryGetProperty("method", out var methodProp))
                 {
-                     throw new ArgumentException("Payload must contain 'url' and 'method'");
+                    throw new ArgumentException("Payload must contain 'url' and 'method'");
                 }
 
                 var url = urlProp.GetString();
@@ -59,7 +59,7 @@ namespace RemoteExec.Api.Infrastructure.Executors
                 result.Metadata["StatusCode"] = ((int)response.StatusCode).ToString();
 
                 var content = await response.Content.ReadAsStringAsync(cancellationToken);
-                // Truncate body for safety/size
+                
                 result.Data = content.Length > 1000 ? content.Substring(0, 1000) + "...(truncated)" : content;
             }
             catch (Exception ex)

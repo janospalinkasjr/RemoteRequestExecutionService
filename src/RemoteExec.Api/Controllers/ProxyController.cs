@@ -48,17 +48,17 @@ namespace RemoteExec.Api.Controllers
             JsonElement payload;
             try 
             {
-                 if (string.IsNullOrWhiteSpace(bodyRef)) 
-                 {
-                     payload = JsonSerializer.SerializeToElement(new { 
-                         url = "https://example.com/" + targetPath,
-                         method = Request.Method
-                     });
-                 }
-                 else 
-                 {
-                     payload = JsonSerializer.Deserialize<JsonElement>(bodyRef);
-                 }
+                if (string.IsNullOrWhiteSpace(bodyRef)) 
+                {
+                    payload = JsonSerializer.SerializeToElement(new { 
+                        url = "https://example.com/" + targetPath,
+                        method = Request.Method
+                    });
+                }
+                else 
+                {
+                    payload = JsonSerializer.Deserialize<JsonElement>(bodyRef);
+                }
             }
             catch
             {
@@ -66,13 +66,13 @@ namespace RemoteExec.Api.Controllers
                 payload = JsonSerializer.SerializeToElement(new { rawBody = bodyRef });
             }
 
-             var execReq = new ExecutionRequest
-             {
-                 ExecutorType = executorType,
-                 Payload = payload,
-                 PathInfo = targetPath,
-                 CorrelationId = Request.Headers["X-Correlation-ID"].FirstOrDefault()
-             };
+            var execReq = new ExecutionRequest
+            {
+                ExecutorType = executorType,
+                Payload = payload,
+                PathInfo = targetPath,
+                CorrelationId = Request.Headers["X-Correlation-ID"].FirstOrDefault()
+            };
 
             var response = await _orchestrator.HandleRequestAsync(execReq, HttpContext.RequestAborted);
             

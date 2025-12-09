@@ -48,11 +48,11 @@ namespace RemoteExec.Api.Infrastructure.Executors
                 Runspace runspace;
                 if (request.Payload.TryGetProperty("computerName", out var computerProp) && !string.IsNullOrWhiteSpace(computerProp.GetString()))
                 {
-                     var computerName = computerProp.GetString();
-                     var connectionInfo = new WSManConnectionInfo(new Uri($"http://{computerName}:5985/wsman"));
-                     // Note: Authentication is complex. Defaulting to Default credentials.
-                     // In a real scenario, we'd extract credentials from context or vault.
-                     runspace = RunspaceFactory.CreateRunspace(connectionInfo);
+                    var computerName = computerProp.GetString();
+                    var connectionInfo = new WSManConnectionInfo(new Uri($"http://{computerName}:5985/wsman"));
+                    // Note: Authentication is complex. Defaulting to Default credentials.
+                    // In a real scenario, we'd extract credentials from context or vault.
+                    runspace = RunspaceFactory.CreateRunspace(connectionInfo);
                 }
                 else
                 {

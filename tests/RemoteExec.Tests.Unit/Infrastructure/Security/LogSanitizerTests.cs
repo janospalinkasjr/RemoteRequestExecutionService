@@ -1,5 +1,4 @@
 using RemoteExec.Api.Core.Security;
-using Xunit;
 
 namespace RemoteExec.Tests.Unit.Infrastructure.Security
 {

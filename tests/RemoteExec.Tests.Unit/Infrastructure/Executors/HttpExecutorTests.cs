@@ -5,7 +5,6 @@ using Moq;
 using Moq.Protected;
 using RemoteExec.Api.Core.Models;
 using RemoteExec.Api.Infrastructure.Executors;
-using Xunit;
 
 namespace RemoteExec.Tests.Unit.Executors
 {
