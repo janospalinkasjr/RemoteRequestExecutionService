@@ -64,10 +64,20 @@ docker run -p 8080:8080 remote-executor
 
 ### Sample Request
 
+## HTTP request
+
 ```bash
 curl -X POST http://localhost:8080/api/http \
    -H "Content-Type: application/json" \
    -d '{ "url": "https://httpbin.org/get", "method": "GET" }'
+```
+
+## Powershell request
+
+```bash
+curl --location 'http://localhost:8080/api/powershell' \
+    -H 'Content-Type: text/plain' \
+    -d '{ "command": "Get-Date", "args": { "Format": "yyyy-MM-dd" } }'
 ```
 
 ## Security & Limitations
