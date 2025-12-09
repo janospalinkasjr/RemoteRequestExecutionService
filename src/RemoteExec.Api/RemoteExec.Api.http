@@ -1,6 +1,0 @@
-@RemoteExec.Api_HostAddress = http://localhost:5269
-
-GET {{RemoteExec.Api_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###
