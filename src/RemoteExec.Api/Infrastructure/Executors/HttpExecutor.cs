@@ -1,5 +1,6 @@
 using RemoteExec.Api.Core.Interfaces;
 using RemoteExec.Api.Core.Models;
+using RemoteExec.Api.Core.Security;
 
 namespace RemoteExec.Api.Infrastructure.Executors
 {
@@ -21,6 +22,7 @@ namespace RemoteExec.Api.Infrastructure.Executors
             
             try
             {
+                // 1. Parse Payload
                 if (!request.Payload.TryGetProperty("url", out var urlProp) || 
                     !request.Payload.TryGetProperty("method", out var methodProp))
                 {
@@ -33,6 +35,7 @@ namespace RemoteExec.Api.Infrastructure.Executors
                 using var client = _httpClientFactory.CreateClient("UniversalClient");
                 var httpRequest = new HttpRequestMessage(method, url);
 
+                // Add headers if present
                 if (request.Payload.TryGetProperty("headers", out var headersProp))
                 {
                     foreach (var header in headersProp.EnumerateObject())
@@ -41,10 +44,12 @@ namespace RemoteExec.Api.Infrastructure.Executors
                     }
                 }
 
+                // Add body if present
                 if (request.Payload.TryGetProperty("body", out var bodyProp))
                 {
-                    var jsonBody = bodyProp.GetRawText();
+                    var jsonBody = bodyProp.ToString();
                     httpRequest.Content = new StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json");
+                    _logger.LogInformation("Added Body: {Body}", LogSanitizer.Sanitize(jsonBody));
                 }
 
                 var response = await client.SendAsync(httpRequest, cancellationToken);
@@ -54,7 +59,7 @@ namespace RemoteExec.Api.Infrastructure.Executors
                 result.Metadata["StatusCode"] = ((int)response.StatusCode).ToString();
 
                 var content = await response.Content.ReadAsStringAsync(cancellationToken);
-                
+                // Truncate body for safety/size
                 result.Data = content.Length > 1000 ? content.Substring(0, 1000) + "...(truncated)" : content;
             }
             catch (Exception ex)
