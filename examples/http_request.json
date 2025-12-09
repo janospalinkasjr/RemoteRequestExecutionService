@@ -1,0 +1,10 @@
+{
+    "url": "https://httpbin.org/post",
+    "method": "POST",
+    "headers": {
+        "X-Custom-Header": "Demo"
+    },
+    "body": {
+        "foo": "bar"
+    }
+}

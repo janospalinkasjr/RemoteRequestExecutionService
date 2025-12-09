@@ -1,0 +1,6 @@
+{
+    "command": "Get-Date",
+    "args": {
+        "Format": "yyyy-MM-dd"
+    }
+}
