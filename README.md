@@ -64,7 +64,7 @@ docker run -p 8080:8080 remote-executor
 
 ### Sample Request
 
-## HTTP request
+#### HTTP request
 
 ```bash
 curl -X POST http://localhost:8080/api/http \
@@ -72,7 +72,7 @@ curl -X POST http://localhost:8080/api/http \
    -d '{ "url": "https://httpbin.org/get", "method": "GET" }'
 ```
 
-## Powershell request
+#### Powershell request
 
 ```bash
 curl --location 'http://localhost:8080/api/powershell' \
