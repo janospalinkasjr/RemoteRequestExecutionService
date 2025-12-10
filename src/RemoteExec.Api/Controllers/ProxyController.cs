@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
-using RemoteExec.Api.Core.Models;
 using RemoteExec.Api.Core.Interfaces;
+using RemoteExec.Api.Core.Models;
 
 namespace RemoteExec.Api.Controllers
 {
@@ -10,60 +10,58 @@ namespace RemoteExec.Api.Controllers
     public class ProxyController : ControllerBase
     {
         private readonly IRequestOrchestrator _orchestrator;
+        private readonly IMetricsCollector _metrics;
         private readonly ILogger<ProxyController> _logger;
 
-        public ProxyController(IRequestOrchestrator orchestrator, ILogger<ProxyController> logger)
+        public ProxyController(
+            IRequestOrchestrator orchestrator,
+            IMetricsCollector metrics,
+            ILogger<ProxyController> logger)
         {
             _orchestrator = orchestrator;
+            _metrics = metrics;
             _logger = logger;
         }
 
         [HttpGet("ping")]
-        public IActionResult Ping() => Ok("pong");
+        public IActionResult Ping()
+        {
+            return Ok("pong");
+        }
 
         [HttpGet("metrics")]
-        public IActionResult Metrics([FromServices] Core.Interfaces.IMetricsCollector metrics) 
-            => Ok(metrics.GetSnapshot());
-
-        [Route("{**catchAll}")]
-        [HttpGet, HttpPost, HttpPut, HttpDelete, HttpPatch]
-        public async Task<IActionResult> HandleRequest(string catchAll)
+        public IActionResult Metrics()
         {
-            string executorType = "http";
-            string targetPath = catchAll;
+            var snapshot = _metrics.GetSnapshot();
+            return Ok(snapshot);
+        }
 
-            var segments = catchAll.Split('/');
-            if (segments.Length > 0 && (segments[0] == "http" || segments[0] == "powershell"))
-            {
-                executorType = segments[0];
-                targetPath = string.Join("/", segments.Skip(1));
-            }
-
-            string bodyRef = "";
-            using (var reader = new StreamReader(Request.Body))
-            {
-                bodyRef = await reader.ReadToEndAsync();
-            }
-
+        [HttpGet("{executorType}/{**targetPath}")]
+        [HttpPost("{executorType}/{**targetPath}")]
+        [HttpPut("{executorType}/{**targetPath}")]
+        [HttpDelete("{executorType}/{**targetPath}")]
+        [HttpPatch("{executorType}/{**targetPath}")]
+        public async Task<IActionResult> Handle(string executorType, string? targetPath = null)
+        {
             JsonElement payload;
-            try 
+
+            if (Request.ContentLength is null or 0)
             {
-                if (string.IsNullOrWhiteSpace(bodyRef)) 
-                {
-                    payload = JsonSerializer.SerializeToElement(new { 
-                        url = "https://example.com/" + targetPath,
-                        method = Request.Method
-                    });
-                }
-                else 
-                {
-                    payload = JsonSerializer.Deserialize<JsonElement>(bodyRef);
-                }
+                payload = JsonDocument.Parse("{}").RootElement;
             }
-            catch
+            else
             {
-                // Fallback to raw body
-                payload = JsonSerializer.SerializeToElement(new { rawBody = bodyRef });
+                using var reader = new StreamReader(Request.Body);
+                var body = await reader.ReadToEndAsync();
+
+                if (string.IsNullOrWhiteSpace(body))
+                {
+                    payload = JsonDocument.Parse("{}").RootElement;
+                }
+                else
+                {
+                    payload = JsonDocument.Parse(body).RootElement;
+                }
             }
 
             var execReq = new ExecutionRequest
@@ -71,12 +69,63 @@ namespace RemoteExec.Api.Controllers
                 ExecutorType = executorType,
                 Payload = payload,
                 PathInfo = targetPath,
-                CorrelationId = Request.Headers["X-Correlation-ID"].FirstOrDefault()
+                CorrelationId = Request.Headers["X-Correlation-ID"].FirstOrDefault(),
+                Context = new Dictionary<string, string>
+                {
+                    ["Method"] = Request.Method,
+                    ["QueryString"] = Request.QueryString.Value ?? string.Empty
+                }
             };
 
             var response = await _orchestrator.HandleRequestAsync(execReq, HttpContext.RequestAborted);
-            
-            return response.Status == "Success" ? Ok(response) : StatusCode(500, response);
+
+            if (!string.IsNullOrEmpty(response.RequestId))
+            {
+                Response.Headers["X-Request-ID"] = response.RequestId;
+            }
+
+            if (!string.IsNullOrEmpty(response.CorrelationId))
+            {
+                Response.Headers["X-Correlation-ID"] = response.CorrelationId;
+            }
+
+            if (response.Resilience != null)
+            {
+                Response.Headers["X-Attempt-Count"] = response.Resilience.TotalAttempts.ToString();
+            }
+
+            return MapToHttpResult(response);
+        }
+
+        private IActionResult MapToHttpResult(ResponseEnvelope response)
+        {
+            switch (response.Status)
+            {
+                case "Success":
+                    return Ok(response);
+
+                case "ValidationError":
+                case "BadRequest":
+                case "ExecutorNotSupported":
+                case "ExecutorNotFound":
+                    return BadRequest(response);
+
+                case "NotFound":
+                case "TargetNotFound":
+                    return NotFound(response);
+
+                case "Throttled":
+                case "RateLimited":
+                    return StatusCode(StatusCodes.Status429TooManyRequests, response);
+
+                case "CircuitOpen":
+                case "TransientFailure":
+                case "ServiceUnavailable":
+                    return StatusCode(StatusCodes.Status503ServiceUnavailable, response);
+
+                default:
+                    return StatusCode(StatusCodes.Status500InternalServerError, response);
+            }
         }
     }
 }
