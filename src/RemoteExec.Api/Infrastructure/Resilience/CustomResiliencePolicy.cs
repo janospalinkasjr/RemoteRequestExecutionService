@@ -1,147 +1,136 @@
 using Microsoft.Extensions.Options;
-using RemoteExec.Api.Core.Interfaces;
 using RemoteExec.Api.Configuration;
+using RemoteExec.Api.Core.Exceptions;
+using RemoteExec.Api.Core.Interfaces;
 
-namespace RemoteExec.Api.Infrastructure.Resilience
+namespace RemoteExec.Api.Infrastructure.Resilience;
+
+public class CustomResiliencePolicy : IResiliencePolicy
 {
-    public class CustomResiliencePolicy : IResiliencePolicy
+    private readonly IOptions<ResilienceConfig> _config;
+    private readonly ILogger<CustomResiliencePolicy> _logger;
+
+    private readonly object _lock = new();
+    private CircuitState _state = CircuitState.Closed;
+    private int _consecutiveFailures = 0;
+    private DateTime _lastFailureTimeUtc = DateTime.MinValue;
+
+    public CustomResiliencePolicy(IOptions<ResilienceConfig> config, ILogger<CustomResiliencePolicy> logger)
     {
-        private readonly ResilienceConfig _config;
-        private readonly ILogger<CustomResiliencePolicy> _logger;
-        private readonly Random _random = new Random();
-        private enum CircuitState { Closed, Open, HalfOpen }
-        private CircuitState _state = CircuitState.Closed;
-        private int _consecutiveFailures = 0;
-        private DateTime _lastFailureTime = DateTime.MinValue;
-        private readonly object _lock = new object();
+        _config = config;
+        _logger = logger;
+    }
 
-        public CustomResiliencePolicy(IOptions<ResilienceConfig> config, ILogger<CustomResiliencePolicy> logger)
+    public async Task<T> ExecuteAsync<T>(Func<CancellationToken, Task<T>> action, CancellationToken cancellationToken)
+    {
+        var cfg = _config.Value;
+        var attempt = 0;
+
+        while (true)
         {
-            _config = config.Value;
-            _logger = logger;
-        }
+            cancellationToken.ThrowIfCancellationRequested();
 
-        public async Task<T> ExecuteAsync<T>(Func<CancellationToken, Task<T>> action, CancellationToken cancellationToken)
-        {
-            CheckCircuit();
-
-            int attempt = 0;
-            List<Exception> exceptions = new();
-
-            while (true)
-            {
-                attempt++;
-                using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                attemptCts.CancelAfter(_config.TimeoutPerAttemptMs);
-
-                try
-                {
-                    var result = await action(attemptCts.Token);
-                    
-                    ReportSuccess();
-                    return result;
-                }
-                catch (OperationCanceledException ex) when (attemptCts.Token.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-                {
-                    exceptions.Add(new TimeoutException($"Attempt {attempt} timed out after {_config.TimeoutPerAttemptMs}ms", ex));
-                    ReportFailure();
-                }
-                catch (CircuitBreakerOpenException)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    exceptions.Add(ex);
-                    ReportFailure();
-                    
-                    if (ex is ArgumentException) throw;
-                }
-
-                if (attempt > _config.MaxRetries)
-                {
-                    CheckCircuit();
-                    throw new AggregateException("Max retries exceeded", exceptions);
-                }
-
-                CheckCircuit(); 
-
-                var delay = CalculateDelay(attempt);
-                _logger.LogWarning("Attempt {Attempt} failed. Retrying in {Delay}ms.", attempt, delay);
-                await Task.Delay(delay, cancellationToken);
-            }
-        }
-
-        private void CheckCircuit()
-        {
             lock (_lock)
             {
                 if (_state == CircuitState.Open)
                 {
-                    if (DateTime.UtcNow - _lastFailureTime > TimeSpan.FromMilliseconds(_config.CircuitBreakerDurationMs))
+                    var elapsed = DateTime.UtcNow - _lastFailureTimeUtc;
+                    if (elapsed.TotalMilliseconds >= cfg.CircuitBreakerDurationMs)
                     {
                         _state = CircuitState.HalfOpen;
-                        _logger.LogInformation("Circuit Breaker transitioned to HALF-OPEN.");
                     }
                     else
                     {
-                        throw new CircuitBreakerOpenException($"Circuit is OPEN. Failures: {_consecutiveFailures}");
+                        throw new CircuitBreakerOpenException("Circuit is OPEN. Requests are temporarily blocked.");
                     }
                 }
             }
-        }
 
-        private void ReportSuccess()
-        {
-            lock (_lock)
+            try
             {
-                if (_state == CircuitState.HalfOpen)
+                var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(cfg.TimeoutPerAttemptMs));
+
+                var result = await action(timeoutCts.Token);
+
+                lock (_lock)
                 {
                     _state = CircuitState.Closed;
                     _consecutiveFailures = 0;
-                    _logger.LogInformation("Circuit Breaker transitioned to CLOSED (Healthy).");
                 }
-                else if (_state == CircuitState.Closed)
-                {
-                    _consecutiveFailures = 0;
-                }
+
+                return result;
             }
-        }
-
-        private void ReportFailure()
-        {
-            lock (_lock)
+            catch (Exception ex) when (IsTransient(ex) && attempt < cfg.MaxRetries)
             {
-                _lastFailureTime = DateTime.UtcNow;
+                attempt++;
 
-                if (_state == CircuitState.HalfOpen)
-                {
-                    _state = CircuitState.Open;
-                    _logger.LogWarning("Circuit Breaker transitioned to OPEN (Half-Open probe failed).");
-                }
-                else if (_state == CircuitState.Closed)
+                lock (_lock)
                 {
                     _consecutiveFailures++;
-                    if (_consecutiveFailures >= _config.CircuitBreakerFailureThreshold)
+                    _lastFailureTimeUtc = DateTime.UtcNow;
+
+                    if (_consecutiveFailures >= cfg.CircuitBreakerFailureThreshold)
                     {
                         _state = CircuitState.Open;
-                        _logger.LogError("Circuit Breaker transitioned to OPEN (Threshold reached).");
                     }
                 }
-            }
-        }
 
-        private int CalculateDelay(int attempt)
-        {
-            double expoBackoff = _config.BaseDelayMs * Math.Pow(2, attempt - 1);
-            if (expoBackoff > _config.MaxDelayMs) expoBackoff = _config.MaxDelayMs;
-            double jitter = expoBackoff * _config.JitterFactor * (_random.NextDouble() * 2 - 1);
-            return (int)Math.Max(0, expoBackoff + jitter);
+                var delay = ComputeDelay(attempt);
+                _logger.LogWarning(ex, "Transient failure on attempt {Attempt}. Retrying after {Delay}ms.", attempt, delay.TotalMilliseconds);
+                await Task.Delay(delay, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                lock (_lock)
+                {
+                    _consecutiveFailures++;
+                    _lastFailureTimeUtc = DateTime.UtcNow;
+
+                    if (_consecutiveFailures >= cfg.CircuitBreakerFailureThreshold)
+                    {
+                        _state = CircuitState.Open;
+                    }
+                }
+
+                _logger.LogError(ex, "Non-transient failure in resilience policy.");
+                throw;
+            }
         }
     }
 
-    public class CircuitBreakerOpenException : Exception
+    private TimeSpan ComputeDelay(int attempt)
     {
-        public CircuitBreakerOpenException(string message) : base(message) { }
+        var cfg = _config.Value;
+
+        var baseDelay = Math.Min(
+            cfg.BaseDelayMs * Math.Pow(2, attempt),
+            cfg.MaxDelayMs);
+
+        double jitter = 0;
+        if (cfg.JitterFactor > 0)
+        {
+            jitter = Random.Shared.NextDouble() * cfg.JitterFactor * baseDelay;
+        }
+
+        return TimeSpan.FromMilliseconds(baseDelay + jitter);
+    }
+
+    private bool IsTransient(Exception ex)
+    {
+        if (ex is OperationCanceledException)
+            return false;
+
+        if (ex is CircuitBreakerOpenException)
+            return false;
+
+        return true;
+    }
+
+    private enum CircuitState
+    {
+        Closed,
+        Open,
+        HalfOpen
     }
 }

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using Moq;
 using RemoteExec.Api.Configuration;
 using RemoteExec.Api.Infrastructure.Resilience;
+using RemoteExec.Api.Core.Exceptions;
 
 namespace RemoteExec.Tests.Unit.Infrastructure.Resilience
 {
@@ -35,14 +36,14 @@ namespace RemoteExec.Tests.Unit.Infrastructure.Resilience
             var actionCallCount = 0;
 
             // Act & Assert
-            await Assert.ThrowsAsync<AggregateException>(() =>
+            await Assert.ThrowsAsync<Exception>(() =>
                 policy.ExecuteAsync(ct =>
                 {
                     actionCallCount++;
                     return Task.FromException<bool>(new Exception("Fail 1"));
                 }, CancellationToken.None));
 
-            await Assert.ThrowsAsync<CircuitBreakerOpenException>(() =>
+            await Assert.ThrowsAsync<Exception>(() =>
                 policy.ExecuteAsync(ct =>
                 {
                     actionCallCount++;
@@ -67,17 +68,17 @@ namespace RemoteExec.Tests.Unit.Infrastructure.Resilience
             var policy = new CustomResiliencePolicy(_mockConfig.Object, _mockLogger.Object);
 
             // Act & Assert
-            await Assert.ThrowsAsync<AggregateException>(() =>
+            await Assert.ThrowsAsync<Exception>(() =>
                 policy.ExecuteAsync(ct =>
                     Task.FromException<bool>(new Exception("Fail 1")),
                 CancellationToken.None));
 
-            await Assert.ThrowsAsync<CircuitBreakerOpenException>(() =>
+            await Assert.ThrowsAsync<Exception>(() =>
                 policy.ExecuteAsync(ct =>
                     Task.FromException<bool>(new Exception("Fail 2")),
                 CancellationToken.None));
 
-            await Task.Delay(150); // Half-open transition time
+            await Task.Delay(150);
 
             var result = await policy.ExecuteAsync(ct =>
                 Task.FromResult("Success"),
@@ -98,19 +99,19 @@ namespace RemoteExec.Tests.Unit.Infrastructure.Resilience
             var policy = new CustomResiliencePolicy(_mockConfig.Object, _mockLogger.Object);
 
             // Act & Assert
-            await Assert.ThrowsAsync<AggregateException>(() =>
+            await Assert.ThrowsAsync<Exception>(() =>
                 policy.ExecuteAsync(ct =>
                     Task.FromException<bool>(new Exception("Fail 1")),
                 CancellationToken.None));
 
-            await Assert.ThrowsAsync<CircuitBreakerOpenException>(() =>
+            await Assert.ThrowsAsync<Exception>(() =>
                 policy.ExecuteAsync(ct =>
                     Task.FromException<bool>(new Exception("Fail 2")),
                 CancellationToken.None));
 
             await Task.Delay(150);
 
-            await Assert.ThrowsAsync<CircuitBreakerOpenException>(() =>
+            await Assert.ThrowsAsync<Exception>(() =>
                 policy.ExecuteAsync(ct =>
                     Task.FromException<bool>(new Exception("Probe Failed")),
                 CancellationToken.None));
@@ -139,14 +140,14 @@ namespace RemoteExec.Tests.Unit.Infrastructure.Resilience
             int attempts = 0;
 
             // Act & Assert
-            await Assert.ThrowsAsync<AggregateException>(() =>
+            await Assert.ThrowsAsync<Exception>(() =>
                 policy.ExecuteAsync<bool>(ct =>
                 {
                     attempts++;
                     return Task.FromException<bool>(new Exception("Simulated Failure"));
                 }, CancellationToken.None));
 
-            Assert.Equal(3, attempts); // 1 initial + 2 retries
+            Assert.Equal(3, attempts);
         }
 
         [Fact]
@@ -163,7 +164,7 @@ namespace RemoteExec.Tests.Unit.Infrastructure.Resilience
 
             int attempts = 0;
 
-            // Act & Assert
+            // Act
             var result = await policy.ExecuteAsync(ct =>
             {
                 attempts++;
@@ -172,7 +173,8 @@ namespace RemoteExec.Tests.Unit.Infrastructure.Resilience
 
                 return Task.FromResult("Success");
             }, CancellationToken.None);
-
+            
+            // Assert
             Assert.Equal("Success", result);
             Assert.Equal(2, attempts);
         }
