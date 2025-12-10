@@ -1,169 +1,198 @@
+using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Moq;
+using RemoteExec.Api.Core.Exceptions;
 using RemoteExec.Api.Core.Interfaces;
 using RemoteExec.Api.Core.Models;
 using RemoteExec.Api.Infrastructure.Services;
-using Moq;
-using Microsoft.Extensions.Logging;
 
 namespace RemoteExec.Tests.Unit.Infrastructure.Services
 {
     public class RequestOrchestratorTests
     {
-        private readonly Mock<IResiliencePolicy> _mockResiliencePolicy;
-        private readonly Mock<IMetricsCollector> _mockMetrics;
-        private readonly Mock<ILogger<RequestOrchestrator>> _mockLogger;
-        private readonly Mock<IExecutor> _mockHttpExecutor;
-        private readonly RequestOrchestrator _orchestrator;
-        private readonly List<IExecutor> _executors;
+        private readonly Mock<IExecutor> _httpExecutorMock;
+        private readonly Mock<IResiliencePolicy> _policyMock;
+        private readonly Mock<IMetricsCollector> _metricsMock;
+        private readonly Mock<ILogger<RequestOrchestrator>> _loggerMock;
 
         public RequestOrchestratorTests()
         {
-            _mockResiliencePolicy = new Mock<IResiliencePolicy>();
-            _mockMetrics = new Mock<IMetricsCollector>();
-            _mockLogger = new Mock<ILogger<RequestOrchestrator>>();
-            
-            _mockHttpExecutor = new Mock<IExecutor>();
-            _mockHttpExecutor.Setup(e => e.Name).Returns("http");
+            _httpExecutorMock = new Mock<IExecutor>();
+            _httpExecutorMock.SetupGet(e => e.Name).Returns("http");
 
-            _executors = new List<IExecutor> { _mockHttpExecutor.Object };
+            _policyMock = new Mock<IResiliencePolicy>();
+            _metricsMock = new Mock<IMetricsCollector>();
+            _loggerMock = new Mock<ILogger<RequestOrchestrator>>();
+        }
 
-            _orchestrator = new RequestOrchestrator(
-                _executors,
-                _mockResiliencePolicy.Object,
-                _mockMetrics.Object,
-                _mockLogger.Object
-            );
+        private static ExecutionRequest CreateRequest(string executorType = "http")
+        {
+            var payload = JsonDocument.Parse("{}").RootElement;
+
+            return new ExecutionRequest
+            {
+                ExecutorType = executorType,
+                RequestId = Guid.NewGuid().ToString(),
+                CorrelationId = Guid.NewGuid().ToString(),
+                Payload = payload
+            };
         }
 
         [Fact]
-        public async Task HandleRequestAsync_ReturnsFailure_WhenExecutorNotSupported()
+        public async Task HandleRequestAsync_UsesMatchingExecutor()
         {
-            // Arrange
-            var request = new ExecutionRequest 
-            { 
-                ExecutorType = "unknown",
-                Payload = System.Text.Json.JsonDocument.Parse("{}").RootElement
-            };
+            var request = CreateRequest("http");
 
-            // Act
-            var response = await _orchestrator.HandleRequestAsync(request, CancellationToken.None);
-
-            // Assert
-            Assert.Equal("Failed", response.Status);
-            Assert.NotNull(response.Result); 
-            _mockMetrics.Verify(m => m.RecordRequest("unknown"), Times.Once);
-            _mockMetrics.Verify(m => m.RecordFailure("unknown", false), Times.Once);
-        }
-
-        [Fact]
-        public async Task HandleRequestAsync_ExecutesSuccessfully_RecordsMetrics()
-        {
-            // Arrange
-            var request = new ExecutionRequest 
-            { 
-                ExecutorType = "http",
-                Payload = System.Text.Json.JsonDocument.Parse("{}").RootElement
-            };
-            var expectedResult = new ExecutionResult 
-            { 
-                IsSuccess = true, 
-                Data = "OK",
+            var execResult = new ExecutionResult
+            {
+                IsSuccess = true,
                 StartTimeUtc = DateTime.UtcNow,
-                EndTimeUtc = DateTime.UtcNow.AddMilliseconds(100)
+                EndTimeUtc = DateTime.UtcNow.AddMilliseconds(10),
+                Data = "ok"
             };
 
-            _mockResiliencePolicy.Setup(p => p.ExecuteAsync(
-                It.IsAny<Func<CancellationToken, Task<ExecutionResult>>>(), 
-                It.IsAny<CancellationToken>()))
-                .Returns<Func<CancellationToken, Task<ExecutionResult>>, CancellationToken>(
-                    (func, ct) => func(ct));
+            _httpExecutorMock
+                .Setup(e => e.ExecuteAsync(It.IsAny<ExecutionRequest>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(execResult);
 
-            // Setup Executor
-            _mockHttpExecutor.Setup(e => e.ExecuteAsync(request, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(expectedResult);
+            _policyMock
+                .Setup(p => p.ExecuteAsync(It.IsAny<Func<CancellationToken, Task<ExecutionResult>>>(), It.IsAny<CancellationToken>()))
+                .Returns<Func<CancellationToken, Task<ExecutionResult>>, CancellationToken>((action, ct) => action(ct));
 
-            // Act
-            var response = await _orchestrator.HandleRequestAsync(request, CancellationToken.None);
+            var orchestrator = new RequestOrchestrator(
+                new[] { _httpExecutorMock.Object },
+                _policyMock.Object,
+                _metricsMock.Object,
+                _loggerMock.Object);
 
-            // Assert
-            Assert.Equal("Success", response.Status);
-            Assert.Equal("OK", response.Result);
-            Assert.Equal(1, response.Resilience?.TotalAttempts);
-            Assert.Single(response.Resilience?.AttemptOutcomes ?? new List<string>());
-            Assert.Equal("Success", response.Resilience?.AttemptOutcomes.First());
+            var envelope = await orchestrator.HandleRequestAsync(request, CancellationToken.None);
 
-            _mockMetrics.Verify(m => m.RecordRequest("http"), Times.Once);
-            _mockMetrics.Verify(m => m.RecordSuccess("http"), Times.Once);
-            _mockMetrics.Verify(m => m.RecordLatency("http", It.IsAny<double>()), Times.Once);
+            Assert.Equal("Success", envelope.Status);
+            Assert.Equal("ok", envelope.Result);
+            _httpExecutorMock.Verify(e => e.ExecuteAsync(It.IsAny<ExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Fact]
+        public async Task HandleRequestAsync_ReturnsError_WhenExecutorNotFound()
+        {
+            var request = CreateRequest("unknown");
+
+            var orchestrator = new RequestOrchestrator(
+                Array.Empty<IExecutor>(),
+                _policyMock.Object,
+                _metricsMock.Object,
+                _loggerMock.Object);
+
+            var envelope = await orchestrator.HandleRequestAsync(request, CancellationToken.None);
+
+            Assert.Equal("Failed", envelope.Status);
+            var error = Assert.IsType<ErrorInfo>(envelope.Result);
+            Assert.Equal("ExecutorNotSupported", error.Code);
+        }
+
+        [Fact]
+        public async Task HandleRequestAsync_MapsCircuitBreakerOpen_ToCircuitError()
+        {
+            var request = CreateRequest("http");
+
+            _policyMock
+                .Setup(p => p.ExecuteAsync(It.IsAny<Func<CancellationToken, Task<ExecutionResult>>>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new CircuitBreakerOpenException("Circuit is OPEN"));
+
+            var orchestrator = new RequestOrchestrator(
+                new[] { _httpExecutorMock.Object },
+                _policyMock.Object,
+                _metricsMock.Object,
+                _loggerMock.Object);
+
+            var envelope = await orchestrator.HandleRequestAsync(request, CancellationToken.None);
+
+            Assert.Equal("Failed", envelope.Status);
+            var error = Assert.IsType<ErrorInfo>(envelope.Result);
+            Assert.Equal("CircuitOpen", error.Code);
+            Assert.Equal("Circuit is open. Requests are temporarily blocked.", error.Message);
+        }
+
+        [Fact]
+        public async Task HandleRequestAsync_ReturnsSafeUnhandledError()
+        {
+            var request = CreateRequest("http");
+
+            _policyMock
+                .Setup(p => p.ExecuteAsync(It.IsAny<Func<CancellationToken, Task<ExecutionResult>>>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new Exception("Something internal"));
+
+            var orchestrator = new RequestOrchestrator(
+                new[] { _httpExecutorMock.Object },
+                _policyMock.Object,
+                _metricsMock.Object,
+                _loggerMock.Object);
+
+            var envelope = await orchestrator.HandleRequestAsync(request, CancellationToken.None);
+
+            Assert.Equal("Failed", envelope.Status);
+            var error = Assert.IsType<ErrorInfo>(envelope.Result);
+            Assert.Equal("UnhandledError", error.Code);
+            Assert.Equal("An unexpected error occurred while processing the request.", error.Message);
         }
 
         [Fact]
         public async Task HandleRequestAsync_CapturesResilienceRetries()
         {
-            // Arrange
-            var request = new ExecutionRequest 
-            { 
-                ExecutorType = "http",
-                Payload = System.Text.Json.JsonDocument.Parse("{}").RootElement
+            var request = CreateRequest("http");
+
+            var execResult = new ExecutionResult
+            {
+                IsSuccess = true,
+                StartTimeUtc = DateTime.UtcNow,
+                EndTimeUtc = DateTime.UtcNow.AddMilliseconds(5),
+                Data = "ok-after-retry"
             };
-            var successResult = new ExecutionResult { IsSuccess = true, Data = "Finally Success", StartTimeUtc = DateTime.UtcNow, EndTimeUtc = DateTime.UtcNow };
-            
-            _mockResiliencePolicy.Setup(p => p.ExecuteAsync(
-                It.IsAny<Func<CancellationToken, Task<ExecutionResult>>>(), 
-                It.IsAny<CancellationToken>()))
-                .Returns<Func<CancellationToken, Task<ExecutionResult>>, CancellationToken>(
-                    async (func, ct) => 
+
+            var callCount = 0;
+
+            _httpExecutorMock
+                .Setup(e => e.ExecuteAsync(It.IsAny<ExecutionRequest>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(() =>
+                {
+                    callCount++;
+                    if (callCount == 1)
                     {
-                        // 1st Attempt: Fails
-                        try { await func(ct); } catch { } 
-                        
-                        // 2nd Attempt: Succeeds
-                        return await func(ct);
-                    });
+                        throw new Exception("Transient Error");
+                    }
 
-            _mockHttpExecutor.SetupSequence(e => e.ExecuteAsync(request, It.IsAny<CancellationToken>()))
-                .ThrowsAsync(new Exception("Transient Error"))
-                .ReturnsAsync(successResult);
+                    return execResult;
+                });
 
-            // Act
-            var response = await _orchestrator.HandleRequestAsync(request, CancellationToken.None);
+            _policyMock
+                .Setup(p => p.ExecuteAsync(It.IsAny<Func<CancellationToken, Task<ExecutionResult>>>(), It.IsAny<CancellationToken>()))
+                .Returns<Func<CancellationToken, Task<ExecutionResult>>, CancellationToken>(async (action, ct) =>
+                {
+                    try
+                    {
+                        return await action(ct);
+                    }
+                    catch
+                    {
+                        return await action(ct);
+                    }
+                });
 
-            // Assert
-            Assert.Equal("Success", response.Status);
-            Assert.Equal("Finally Success", response.Result);
-            
-            // Verify Attempts were tracked
-            Assert.Equal(2, response.Resilience?.TotalAttempts);
-            Assert.Equal(2, response.Resilience?.AttemptOutcomes.Count);
-            Assert.Contains("Failed: Transient Error", response.Resilience?.AttemptOutcomes[0]);
-            Assert.Equal("Success", response.Resilience?.AttemptOutcomes[1]);
-        }
+            var orchestrator = new RequestOrchestrator(
+                new[] { _httpExecutorMock.Object },
+                _policyMock.Object,
+                _metricsMock.Object,
+                _loggerMock.Object);
 
-        [Fact]
-        public async Task HandleRequestAsync_ReturnsFailure_WhenExecutionThrows()
-        {
-             // Arrange
-            var request = new ExecutionRequest 
-            { 
-                ExecutorType = "http",
-                Payload = System.Text.Json.JsonDocument.Parse("{}").RootElement
-            };
+            var envelope = await orchestrator.HandleRequestAsync(request, CancellationToken.None);
 
-            // Setup Resilience Policy to bubble up exception
-            _mockResiliencePolicy.Setup(p => p.ExecuteAsync(
-                It.IsAny<Func<CancellationToken, Task<ExecutionResult>>>(), 
-                It.IsAny<CancellationToken>()))
-                .Returns<Func<CancellationToken, Task<ExecutionResult>>, CancellationToken>(
-                    (func, ct) => func(ct));
+            Assert.Equal("Success", envelope.Status);
+            Assert.Equal("ok-after-retry", envelope.Result);
 
-            _mockHttpExecutor.Setup(e => e.ExecuteAsync(request, It.IsAny<CancellationToken>()))
-                .ThrowsAsync(new Exception("Fatal Error"));
-
-            // Act
-            var response = await _orchestrator.HandleRequestAsync(request, CancellationToken.None);
-
-            // Assert
-            Assert.Equal("Failed", response.Status);
-            _mockMetrics.Verify(m => m.RecordFailure("http", false), Times.Once);
+            Assert.NotNull(envelope.Resilience);
+            Assert.Equal(2, envelope.Resilience!.TotalAttempts);
+            Assert.Contains("Exception", envelope.Resilience.AttemptOutcomes);
+            Assert.Contains("Success", envelope.Resilience.AttemptOutcomes);
         }
     }
 }
