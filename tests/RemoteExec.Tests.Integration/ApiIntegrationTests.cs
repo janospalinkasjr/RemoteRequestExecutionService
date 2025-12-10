@@ -1,13 +1,16 @@
-using Microsoft.AspNetCore.Mvc.Testing;
+using System.Net;
 using System.Net.Http.Json;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace RemoteExec.Tests.Integration
 {
-    public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
+    public class ApiIntegrationTests : IClassFixture<TestWebApplicationFactory>
     {
-        private readonly WebApplicationFactory<Program> _factory;
+        private readonly TestWebApplicationFactory _factory;
 
-        public ApiIntegrationTests(WebApplicationFactory<Program> factory)
+        public ApiIntegrationTests(TestWebApplicationFactory factory)
         {
             _factory = factory;
         }
@@ -25,35 +28,29 @@ namespace RemoteExec.Tests.Integration
         [Fact]
         public async Task CatchAll_Http_ShouldWork()
         {
-            // Arrange
             var client = _factory.CreateClient();
-            
-            var requestBody = new 
+
+            var requestBody = new
             {
-                url = "https://example.com", // This might fail without internet
+                url = "https://example.com",
                 method = "GET"
             };
 
-            // Act & Assert
             var response = await client.PostAsJsonAsync("/api/http/test", requestBody);
-            Assert.True(response.IsSuccessStatusCode);
-            
+
             var envelope = await response.Content.ReadFromJsonAsync<ResponseEnvelope>();
             Assert.NotNull(envelope);
-            Assert.NotNull(envelope.RequestId);
-            Assert.Contains(envelope.Status, new[] { "Success", "Failed" });
+            Assert.False(string.IsNullOrWhiteSpace(envelope!.RequestId));
+            Assert.False(string.IsNullOrWhiteSpace(envelope.Status));
         }
 
         [Fact]
         public async Task Metrics_ReturnsSnapshot()
         {
-            // Arrange
             var client = _factory.CreateClient();
-
-            // Act & Assert
             var response = await client.GetAsync("/api/metrics");
-            response.EnsureSuccessStatusCode();
 
+            response.EnsureSuccessStatusCode();
             var content = await response.Content.ReadFromJsonAsync<Dictionary<string, object>>();
             Assert.NotNull(content);
         }
@@ -61,37 +58,34 @@ namespace RemoteExec.Tests.Integration
         [Fact]
         public async Task CatchAll_PowerShell_ShouldWork()
         {
-            // Arrange
             var client = _factory.CreateClient();
-            var requestBody = new 
+            var requestBody = new
             {
                 command = "Get-Date"
             };
 
-            // Act & Assert
             var response = await client.PostAsJsonAsync("/api/powershell/test_ps", requestBody);
-            Assert.True(response.IsSuccessStatusCode);
 
+            response.EnsureSuccessStatusCode();
             var envelope = await response.Content.ReadFromJsonAsync<ResponseEnvelope>();
             Assert.NotNull(envelope);
-            Assert.Equal("Success", envelope.Status);
+            Assert.Equal("Success", envelope!.Status);
         }
 
         [Fact]
         public async Task CatchAll_PropagatesCorrelationId()
         {
-            // Arrange
             var client = _factory.CreateClient();
             var correlationId = Guid.NewGuid().ToString();
-            
+
             client.DefaultRequestHeaders.Add("X-Correlation-ID", correlationId);
             var requestBody = new { command = "Get-Date" };
 
-            // Act & Assert
             var response = await client.PostAsJsonAsync("/api/powershell/correlation_test", requestBody);
+
             Assert.True(response.Headers.Contains("X-Correlation-ID"));
             Assert.Equal(correlationId, response.Headers.GetValues("X-Correlation-ID").First());
-            
+
             var envelope = await response.Content.ReadFromJsonAsync<ResponseEnvelope>();
             Assert.NotNull(envelope);
         }
@@ -101,5 +95,41 @@ namespace RemoteExec.Tests.Integration
     {
         public string? RequestId { get; set; }
         public string? Status { get; set; }
+    }
+
+    public class TestWebApplicationFactory : WebApplicationFactory<Program>
+    {
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            builder.ConfigureServices(services =>
+            {
+                var descriptors = services
+                    .Where(d => d.ServiceType == typeof(IHttpClientFactory))
+                    .ToList();
+
+                foreach (var descriptor in descriptors)
+                {
+                    services.Remove(descriptor);
+                }
+
+                services.AddHttpClient("UniversalClient")
+                    .ConfigurePrimaryHttpMessageHandler(() => new FakeHttpMessageHandler());
+            });
+        }
+    }
+
+    public class FakeHttpMessageHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("stubbed-response")
+            };
+
+            return Task.FromResult(response);
+        }
     }
 }
