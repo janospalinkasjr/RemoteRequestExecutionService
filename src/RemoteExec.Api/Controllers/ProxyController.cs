@@ -64,8 +64,14 @@ namespace RemoteExec.Api.Controllers
                 }
             }
 
+            var existingRequestId = Request.Headers["X-Request-ID"].FirstOrDefault();
+            var effectiveRequestId = string.IsNullOrWhiteSpace(existingRequestId)
+                ? Guid.NewGuid().ToString()
+                : existingRequestId;
+
             var execReq = new ExecutionRequest
             {
+                RequestId = effectiveRequestId,
                 ExecutorType = executorType,
                 Payload = payload,
                 PathInfo = targetPath,
@@ -82,6 +88,10 @@ namespace RemoteExec.Api.Controllers
             if (!string.IsNullOrEmpty(response.RequestId))
             {
                 Response.Headers["X-Request-ID"] = response.RequestId;
+            }
+            else
+            {
+                Response.Headers["X-Request-ID"] = effectiveRequestId;
             }
 
             if (!string.IsNullOrEmpty(response.CorrelationId))

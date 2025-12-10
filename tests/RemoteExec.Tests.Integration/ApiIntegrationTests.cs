@@ -73,21 +73,28 @@ namespace RemoteExec.Tests.Integration
         }
 
         [Fact]
-        public async Task CatchAll_PropagatesCorrelationId()
+        public async Task CatchAll_PropagatesCorrelationId_AndRequestId()
         {
             var client = _factory.CreateClient();
             var correlationId = Guid.NewGuid().ToString();
+            var requestId = Guid.NewGuid().ToString();
 
             client.DefaultRequestHeaders.Add("X-Correlation-ID", correlationId);
+            client.DefaultRequestHeaders.Add("X-Request-ID", requestId);
+
             var requestBody = new { command = "Get-Date" };
 
             var response = await client.PostAsJsonAsync("/api/powershell/correlation_test", requestBody);
 
             Assert.True(response.Headers.Contains("X-Correlation-ID"));
+            Assert.True(response.Headers.Contains("X-Request-ID"));
+
             Assert.Equal(correlationId, response.Headers.GetValues("X-Correlation-ID").First());
+            Assert.Equal(requestId, response.Headers.GetValues("X-Request-ID").First());
 
             var envelope = await response.Content.ReadFromJsonAsync<ResponseEnvelope>();
             Assert.NotNull(envelope);
+            Assert.Equal(requestId, envelope!.RequestId);
         }
     }
 
@@ -95,6 +102,7 @@ namespace RemoteExec.Tests.Integration
     {
         public string? RequestId { get; set; }
         public string? Status { get; set; }
+        public string? CorrelationId { get; set; }
     }
 
     public class TestWebApplicationFactory : WebApplicationFactory<Program>
