@@ -1,94 +1,131 @@
 # Remote Request Execution Service
 
-A production-grade, extensible service in C# for executing remote requests via HTTP and PowerShell.
+A production-grade, extensible remote request execution service in **.NET 8**, supporting **HTTP** and **PowerShell** execution with **custom resilience**, **metrics**, **structured responses**, **secure logging**, and full test coverage.
 
-## Architecture
-
-The solution follows a **Modular Monolith** approach using generic .NET Core abstractions.
+## ⚙️ Architecture Overview
 
 ```mermaid
 graph TD
-    Client -->|JSON/HTTP| Controller[ProxyController]
-    Controller -->|Request| Orchestrator[RequestOrchestrator]
-    Orchestrator -->|Strategy| Executor{IExecutor}
-    Orchestrator -->|Wrap| Resilience[ResiliencePolicy]
-    Resilience -->|Retry/Backoff| Executor
 
-    subgraph Executors
-    Executor -->|HTTP| HttpEx[HttpExecutor]
-    Executor -->|PowerShell| PSEx[PowerShellExecutor]
-    end
+    Client --> API[ProxyController]
 
-    Orchestrator -->|Metrics| Metrics[InMemoryMetricsCollector]
+    API --> ORCH[RequestOrchestrator]
+
+    ORCH --> REG[ExecutorRegistry]
+    REG -->|Selects| EXEC{IExecutor}
+
+    EXEC --> HTTPE[HttpExecutor]
+    EXEC --> PSE[PowerShellExecutor]
+
+    ORCH --> POL[CustomResiliencePolicy]
+    POL --> EXEC
+
+    ORCH --> METRICS[InMemoryMetricsCollector]
+
+    ORCH --> SAN[LogSanitizer]
+
+    API --> RESP[ResponseEnvelope Builder]
 ```
 
-### Design Decisions
+## Features
 
-1.  **Unified API**: The service exposes a single catch-all route `/api/{**path}`. The request `Body` contains the execution details (URL/Command), while the `Path` is preserved as metadata. This allows the service to act as a smart proxy.
-2.  **Custom Resilience Engine**: Instead of using Polly (which is excellent but standard), I implemented a custom `ResiliencePolicy` to demonstrate understanding of retry algorithms (Exponential Backoff + Jitter).
-    - **Backoff Math**: `Delay = min(MaxDelay, BaseDelay * 2^(Attempt-1))` with +/- Jitter.
-    - **Justification**: Exponential backoff prevents thundering herds. Jitter prevents synchronized retries from multiple clients.
-3.  **No Database**: State (Metrics) is kept in-memory using `ConcurrentDictionary` and `Interlocked` operations for thread safety and high performance without external dependencies.
-4.  **PowerShell Security**: An Allowlist Strategy is strictly enforced. Only pre-defined commands (`Get-Process`, etc.) are allowed. Runspaces are isolated per request interpretation (though in this generic implementation they are transient).
+### 1. Unified Proxy API
 
-## Resilience Strategy
+Catch‑all execution surface:
 
-- **Transient Failures**: Network timeouts, 5xx errors (conceptually - current implementation retries generic Exceptions).
-- **Backoff**:
-  - Base Delay: 500ms
-  - Max Delay: 5000ms
-  - Factor: 2.0 (Exponential)
-  - Jitter: +/- 20%
-- **Timeout**:
-  - Per-attempt timeout (default 10s) using `CancellationTokenSource.CreateLinkedTokenSource`.
+```
+POST /api/{executorType}/{**path}
+```
 
-## Running Locally
+### 2. Executors
 
-### Prerequisites
+#### HTTP Executor
 
-- .NET 8 SDK
-- Docker
+- Forwards outbound HTTP with method, headers, query, and body.
+- Returns status, headers, truncated body.
 
-### Run with Dotnet
+#### PowerShell Executor
 
-```bash
+- Creates isolated session per request.
+- Enforces allowlist.
+- Returns objects / stdout / stderr.
+
+### 3. Validation Layer
+
+Rejects malformed requests with structured safe errors.
+
+### 4. Structured Response Envelope
+
+Contains:
+
+- requestId
+- correlationId
+- executorType
+- timestamps
+- status
+- attempt summaries
+- result payload
+
+Adds headers:
+
+- X-Request-ID
+- X-Correlation-ID
+- X-Attempt-Count
+- X-Instance-ID
+
+### 5. Observability
+
+- Structured logs
+- Metrics at `GET /api/metrics`
+
+### 6. Security
+
+- PowerShell allowlist
+- Sensitive logging sanitized
+
+### 7. Containerization
+
+Multi-stage Dockerfile included.
+
+## Run Locally
+
+### Dotnet
+
+```
 dotnet run --project src/RemoteExec.Api
 ```
 
-### Run with Docker
+### Docker
 
-```bash
-docker build -t remote-executor .
-docker run -p 8080:8080 remote-executor
+```
+docker build -t remote-exec .
+docker run -p 8080:8080 remote-exec
 ```
 
-### Sample Request
+## Example Calls
 
-#### HTTP request
+### HTTP
 
-```bash
-curl -X POST http://localhost:8080/api/http \
-   -H "Content-Type: application/json" \
-   -d '{ "url": "https://httpbin.org/get", "method": "GET" }'
+```
+curl -X POST http://localhost:8080/api/http/test  -H "Content-Type: application/json"  -d '{ "url": "https://example.com", "method": "GET" }'
 ```
 
-#### Powershell request
+### PowerShell
 
-```bash
-curl --location 'http://localhost:8080/api/powershell' \
-    -H 'Content-Type: text/plain' \
-    -d '{ "command": "Get-Date", "args": { "Format": "yyyy-MM-dd" } }'
+```
+curl -X POST http://localhost:8080/api/powershell/run  -d '{ "command": "Get-Date" }'
 ```
 
-## Security & Limitations
+## If I Had More Time
 
-- **Secrets**: Log scrubbing is implemented via `LogSanitizer`, masking `Authorization` headers and `password` JSON fields.
-- **Input Limits**: Max request body size is limited to 10MB (configurable) to prevent DoS.
-- **PowerShell**:
-  - Supports local isolated Runspaces.
-  - Supports Remote Sessions via WSMan (requires valid target).
-  - Strict Allowlist for commands.
-
-## "If I had more time..."
-
-- Add Authentication (JWT) to the Proxy.
+- Clean up RequestOrchestrator responsibilities
+- Align more closely with EXO semantics (Powershell)
+- Consider an IClock abstraction
+- Make validation errors structured & explicit
+- Implement transient vs non-transient classification
+- Add “requests_retried” metric
+- Forward query string and selected headers to HTTP executor
+- Make attempt summaries more structured
+- Rate limiting
+- Pluggable policy chain
+- Multi-executor circuit breakers

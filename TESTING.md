@@ -1,79 +1,90 @@
 # Testing Strategy
 
-## Overview
-
-The testing strategy focuses on strict unit testing for the complex logic (Resilience, Validation) and lightweight integration testing for the API surface.
+Full coverage of executors, resilience, orchestrator behavior, metrics, sanitization, and integration surfaces.
 
 ## Test Matrix
 
-| Scenario            | Executor   | Expected Outcome    | Transient? | Retries Used   | Assertions                           |
-| ------------------- | ---------- | ------------------- | ---------- | -------------- | ------------------------------------ |
-| Valid HTTP GET      | HTTP       | Success (200)       | No         | 0              | Result contains data, Status=Success |
-| Invalid URL         | HTTP       | Failed              | No         | 0              | Error message present                |
-| Network Timeout     | HTTP       | Failed (eventually) | Yes        | Configured Max | AttemptCount = Max + 1               |
-| Allowlisted Command | PowerShell | Success             | No         | 0              | Output contains expected string      |
-| Arbitrary Command   | PowerShell | Failed (Validation) | No         | 0              | Error "Not allowlisted"              |
-| API Ping            | N/A        | Success ("pont")    | No         | 0              | Body == "pong"                       |
+| Scenario               | Executor   | Expected   | Transient? | Retries    | Assertions          |
+| ---------------------- | ---------- | ---------- | ---------- | ---------- | ------------------- |
+| Valid HTTP GET         | http       | Success    | No         | 0          | Envelope ok         |
+| Invalid URL            | http       | Fail       | No         | 0          | Error envelope      |
+| Timeout                | http       | Fail       | Yes        | MaxRetries | Attempt summaries   |
+| Allowlisted PS command | powershell | Success    | No         | 0          | Result data         |
+| Disallowed PS command  | powershell | Fail       | No         | 0          | Allowlist error     |
+| Circuit breaker        | any        | Fail-fast  | N/A        | 0          | CB exception        |
+| Ping                   | N/A        | Success    | No         | 0          | "pong"              |
+| Correlation ID         | any        | Propagated | No         | 0          | Header match        |
+| Metrics                | N/A        | Success    | No         | 0          | Dictionary snapshot |
 
-## Unit Test Suites
+## Integration Tests
 
-The following test suites provide high code coverage for core components:
+Use TestWebApplicationFactory + FakeHttpMessageHandler to ensure **no external network dependency**.
 
-### [HttpExecutorTests]
+Covers:
 
-- **Scope**: `HttpExecutor` class.
-- **Coverage**:
-  - Validates correct `HttpRequestMessage` construction (Method, URL, Body, Headers).
-  - Verifies response truncation logic (>1000 chars).
-  - Checks error handling for non-success status codes.
+- Ping
+- HTTP executor
+- PowerShell executor
+- Correlation ID propagation
+- Metrics endpoint
+- Catch‑all forwarding
 
-### [PowerShellExecutorTests]
+## Unit Tests
 
-- **Scope**: `PowerShellExecutor` class.
-- **Coverage**:
-  - **Security**: Ensures strictly allowlisted commands (`Get-Date`, `Get-ChildItem`) can run.
-  - **Validation**: Verifies blocked commands throw `InvalidOperationException`.
-  - **Execution**: Confirms output collection and error stream handling.
+### CustomResiliencePolicyTests
 
-### [InMemoryMetricsCollectorTests]
+- Retry flow
+- Timeout enforcement
+- Circuit breaker transitions
 
-- **Scope**: `InMemoryMetricsCollector` class.
-- **Coverage**: 100% of public API.
-  - Verifies thread-safe increment of `Total`, `Success`, `Failed` counters.
-  - Validates `Average` and `P95` latency calculations.
+### HttpExecutorTests
 
-### [RequestOrchestratorTests]
+- URL building
+- Query/headers merge
+- Truncated body
 
-- **Scope**: `RequestOrchestrator` class.
-- **Coverage**:
-  - **Integration**: Mocks all dependencies (`IExecutor`, `IResiliencePolicy`, etc.) to verify interaction.
-  - **Resilience**: Simulates policy callbacks to verify retry tracking (`TotalAttempts`, `AttemptOutcomes`).
-  - **Routing**: Verifies correct Executor selection based on request type.
+### PowerShellExecutorTests
 
-### [CircuitBreakerTests]
+- Allowlist enforcement
+- Pipeline output handling
 
-- **Scope**: `CustomResiliencePolicy` (Circuit Breaker Logic).
-- **Coverage**:
-  - **State Transitions**: Closed -> Survivor -> Open -> HalfOpen -> Closed.
-  - **Thresholds**: Verifies failure counts trip the breaker.
-  - **Timers**: Verifies duration expiration transitions to Half-Open.
+### RequestOrchestratorTests
 
-### [LogSanitizerTests]
+- Registry-based selection
+- per‑attempt metrics
+- Safe error envelopes
 
-- **Scope**: `LogSanitizer` class.
-- **Coverage**:
-  - **Redaction**: Verifies `Authorization` headers and `password` JSON fields are replaced with `***REDACTED***`.
-  - **Safety**: Ensures non-sensitive logs are preserved.
+### InMemoryMetricsCollectorTests
 
-### [PowerShellRemoteTests]
+- Counters
+- Avg and p95 latency
 
-- **Scope**: `PowerShellExecutor` (Remote Logic).
-- **Coverage**:
-  - **Connection**: Verifies `WSManConnectionInfo` is initialized when `computerName` is present.
-  - **Fallback**: Verifies correct handling (or expected failure) when remote target is unreachable, ensuring logic path is exercised.
+### LogSanitizerTests
 
-## Coverage Rationale
+- Token and secret masking
 
-- **ResiliencePolicyTests**: Verifies the core math and retry limits, which is the most error-prone logical component.
-- **ApiIntegrationTests**: Verifies the wiring of the ASP.NET Core pipeline, Dependency Injection, JSON Serialization, and full request flow (Happy Path, Error Path, Correlation ID).
-- **Component Unit Tests**: Dedicated tests for Executors and Orchestrator ensure strict input validation and correct internal logic independent of the web stack.
+## Manual Validation
+
+Ping:
+
+```
+curl http://localhost:8080/api/ping
+```
+
+HTTP:
+
+```
+curl -X POST http://localhost:8080/api/http/test  -d '{ "url": "https://example.com", "method": "GET" }'
+```
+
+PowerShell:
+
+```
+curl -X POST http://localhost:8080/api/powershell/run  -d '{ "command": "Get-Date" }'
+```
+
+Metrics:
+
+```
+curl http://localhost:8080/api/metrics
+```
