@@ -124,7 +124,6 @@ curl -X POST http://localhost:8080/api/powershell/run  -d '{ "command": "Get-Dat
 - Make validation errors structured & explicit
 - Implement transient vs non-transient classification
 - Add “requests_retried” metric
-- Forward query string and selected headers to HTTP executor
 - Make attempt summaries more structured
 - Rate limiting
 - Pluggable policy chain
