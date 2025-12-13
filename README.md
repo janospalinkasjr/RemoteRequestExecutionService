@@ -4,64 +4,33 @@ A production-grade, extensible remote request execution service in **.NET 8**, s
 
 ## ⚙️ Architecture Overview
 
-Delivered previously
-
 ```mermaid
-flowchart LR
-    Client -->|HTTP Request| API[Unified Proxy API]
+ flowchart LR
+     Client -->|HTTP Request| API[Unified Proxy API]
 
-    API --> Orchestrator
+     API --> Orchestrator
 
-    Orchestrator -->|Validate| Validation
-    Orchestrator -->|Select Executor| ExecutorSelector
+     Orchestrator -->|Validate| Validation
+     Orchestrator -->|Construct| Pipeline[Policy Pipeline]
 
-    Orchestrator -->|Retry Loop| RetryLogic
-    Orchestrator -->|Timeout| TimeoutLogic
-    Orchestrator -->|Metrics| MetricsLogic
+     subgraph Pipeline["Resilience Policy Pipeline"]
+         ResiliencePolicy -->|Retry/Circuit/Timeout| TerminalDelegate
+     end
 
-    ExecutorSelector -->|HTTP| HttpExecutor
-    ExecutorSelector -->|PowerShell| PsExecutor
+     TerminalDelegate -->|Select Executor| ExecutorSelector
 
-    PsExecutor -->|Connect| PsSession
-    PsSession -->|Run Command| PsCommand
-    PsSession -->|Disconnect| PsSession
+     ExecutorSelector -->|HTTP| HttpExecutor
+     ExecutorSelector -->|PowerShell| PsExecutor
 
-    HttpExecutor -->|Outbound Call| ExternalHttp
+     PsExecutor -->|Connect| PsSession
+     PsSession -->|Run Command| PsCommand
+     PsSession -->|Disconnect| PsSession
 
-    Orchestrator -->|Build Envelope| Response
-    Response --> Client
-```
+     HttpExecutor -->|Outbound Call| ExternalHttp
 
-Last delivery covering the previous GAPs
-
-```mermaid
-flowchart LR
-    Client -->|HTTP Request| API[Unified Proxy API]
-
-    API --> Validation
-
-    Validation --> PolicyPipeline
-
-    subgraph PolicyPipeline["Pluggable Policy Pipeline"]
-        RetryPolicy --> TimeoutPolicy --> MetricsPolicy --> ExecutorInvoker
-    end
-
-    ExecutorInvoker --> ExecutorSelector
-
-    ExecutorSelector -->|HTTP| HttpExecutor
-    ExecutorSelector -->|PowerShell| PsExecutor
-
-    subgraph PsExecutor["PowerShell Executor"]
-        PsSessionManager -->|Acquire Session| PsSession
-        PsSession -->|Allowed Cmd Mapping| PsCommand
-        PsCommand -->|Paging / Filtering| PsResult
-        PsSessionManager -->|TTL / Eviction| PsSession
-    end
-
-    HttpExecutor -->|Outbound Call| ExternalHttp
-
-    PolicyPipeline -->|Envelope| Response
-    Response --> Client
+     Pipeline -->|Result| Orchestrator
+     Orchestrator -->|Build Envelope| Response
+     Response --> Client
 ```
 
 ## Features
@@ -163,5 +132,4 @@ curl -X POST http://localhost:8080/api/powershell/run  -d '{ "command": "Get-Dat
 - Add “requests_retried” metric
 - Make attempt summaries more structured
 - Rate limiting
-- Pluggable policy chain
 - Multi-executor circuit breakers

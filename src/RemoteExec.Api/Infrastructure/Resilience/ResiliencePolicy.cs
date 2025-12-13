@@ -2,26 +2,28 @@ using Microsoft.Extensions.Options;
 using RemoteExec.Api.Configuration;
 using RemoteExec.Api.Core.Exceptions;
 using RemoteExec.Api.Core.Interfaces;
+using RemoteExec.Api.Core.Models;
+using ExecutionContext = RemoteExec.Api.Core.Models.ExecutionContext;
 
 namespace RemoteExec.Api.Infrastructure.Resilience;
 
-public class CustomResiliencePolicy : IResiliencePolicy
+public class ResiliencePolicy : IExecutionPolicy
 {
     private readonly IOptions<ResilienceConfig> _config;
-    private readonly ILogger<CustomResiliencePolicy> _logger;
+    private readonly ILogger<ResiliencePolicy> _logger;
 
     private readonly object _lock = new();
     private CircuitState _state = CircuitState.Closed;
     private int _consecutiveFailures = 0;
     private DateTime _lastFailureTimeUtc = DateTime.MinValue;
 
-    public CustomResiliencePolicy(IOptions<ResilienceConfig> config, ILogger<CustomResiliencePolicy> logger)
+    public ResiliencePolicy(IOptions<ResilienceConfig> config, ILogger<ResiliencePolicy> logger)
     {
         _config = config;
         _logger = logger;
     }
 
-    public async Task<T> ExecuteAsync<T>(Func<CancellationToken, Task<T>> action, CancellationToken cancellationToken)
+    public async Task<ExecutionResult> ExecuteAsync(ExecutionContext context, CancellationToken cancellationToken, ExecutionDelegate next)
     {
         var cfg = _config.Value;
         var attempt = 0;
@@ -51,7 +53,7 @@ public class CustomResiliencePolicy : IResiliencePolicy
                 var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(cfg.TimeoutPerAttemptMs));
 
-                var result = await action(timeoutCts.Token);
+                var result = await next(context, timeoutCts.Token);
 
                 lock (_lock)
                 {

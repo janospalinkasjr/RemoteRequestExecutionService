@@ -1,25 +1,25 @@
-using Microsoft.Extensions.Logging;
 using RemoteExec.Api.Core.Exceptions;
 using RemoteExec.Api.Core.Interfaces;
 using RemoteExec.Api.Core.Models;
+using ExecutionContext = RemoteExec.Api.Core.Models.ExecutionContext;
 
 namespace RemoteExec.Api.Infrastructure.Services
 {
     public class RequestOrchestrator : IRequestOrchestrator
     {
         private readonly IEnumerable<IExecutor> _executors;
-        private readonly IResiliencePolicy _resiliencePolicy;
+        private readonly IEnumerable<IExecutionPolicy> _policies;
         private readonly IMetricsCollector _metrics;
         private readonly ILogger<RequestOrchestrator> _logger;
 
         public RequestOrchestrator(
             IEnumerable<IExecutor> executors,
-            IResiliencePolicy resiliencePolicy,
+            IEnumerable<IExecutionPolicy> policies,
             IMetricsCollector metrics,
             ILogger<RequestOrchestrator> logger)
         {
             _executors = executors;
-            _resiliencePolicy = resiliencePolicy;
+            _policies = policies;
             _metrics = metrics;
             _logger = logger;
         }
@@ -48,10 +48,9 @@ namespace RemoteExec.Api.Infrastructure.Services
                     throw new NotSupportedException($"Executor type '{request.ExecutorType}' is not supported.");
                 }
 
-                var result = await _resiliencePolicy.ExecuteAsync(async token =>
+                ExecutionDelegate leaf = async (ctx, token) =>
                 {
                     resilienceSummary.TotalAttempts++;
-
                     try
                     {
                         var res = await executor.ExecuteAsync(request, token);
@@ -63,7 +62,15 @@ namespace RemoteExec.Api.Infrastructure.Services
                         resilienceSummary.AttemptOutcomes.Add("Exception");
                         throw;
                     }
-                }, ct);
+                };
+
+                var pipeline = _policies.Reverse().Aggregate(leaf, (next, policy) => (ctx, token) => policy.ExecuteAsync(ctx, token, next));
+
+                var context = new ExecutionContext(
+                    request.RequestId,
+                    request.CorrelationId ?? request.RequestId
+                );
+                var result = await pipeline(context, ct);
 
                 envelope.Status = result.IsSuccess ? "Success" : "Failed";
                 envelope.Result = result.Data;

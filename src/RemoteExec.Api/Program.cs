@@ -19,7 +19,7 @@ builder.WebHost.ConfigureKestrel(options =>
 // Core Services
 builder.Services.AddHttpClient("UniversalClient");
 builder.Services.AddSingleton<IMetricsCollector, InMemoryMetricsCollector>();
-builder.Services.AddSingleton<IResiliencePolicy, CustomResiliencePolicy>();
+builder.Services.AddSingleton<IExecutionPolicy, ResiliencePolicy>();
 
 // Executors (Registered as IExecutor)
 builder.Services.AddSingleton<IExecutor, HttpExecutor>();
