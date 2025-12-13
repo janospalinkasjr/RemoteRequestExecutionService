@@ -4,27 +4,64 @@ A production-grade, extensible remote request execution service in **.NET 8**, s
 
 ## ⚙️ Architecture Overview
 
+Delivered previously
+
 ```mermaid
-graph TD
+flowchart LR
+    Client -->|HTTP Request| API[Unified Proxy API]
 
-    Client --> API[ProxyController]
+    API --> Orchestrator
 
-    API --> ORCH[RequestOrchestrator]
+    Orchestrator -->|Validate| Validation
+    Orchestrator -->|Select Executor| ExecutorSelector
 
-    ORCH --> REG[ExecutorRegistry]
-    REG -->|Selects| EXEC{IExecutor}
+    Orchestrator -->|Retry Loop| RetryLogic
+    Orchestrator -->|Timeout| TimeoutLogic
+    Orchestrator -->|Metrics| MetricsLogic
 
-    EXEC --> HTTPE[HttpExecutor]
-    EXEC --> PSE[PowerShellExecutor]
+    ExecutorSelector -->|HTTP| HttpExecutor
+    ExecutorSelector -->|PowerShell| PsExecutor
 
-    ORCH --> POL[CustomResiliencePolicy]
-    POL --> EXEC
+    PsExecutor -->|Connect| PsSession
+    PsSession -->|Run Command| PsCommand
+    PsSession -->|Disconnect| PsSession
 
-    ORCH --> METRICS[InMemoryMetricsCollector]
+    HttpExecutor -->|Outbound Call| ExternalHttp
 
-    ORCH --> SAN[LogSanitizer]
+    Orchestrator -->|Build Envelope| Response
+    Response --> Client
+```
 
-    API --> RESP[ResponseEnvelope Builder]
+Last delivery covering the previous GAPs
+
+```mermaid
+flowchart LR
+    Client -->|HTTP Request| API[Unified Proxy API]
+
+    API --> Validation
+
+    Validation --> PolicyPipeline
+
+    subgraph PolicyPipeline["Pluggable Policy Pipeline"]
+        RetryPolicy --> TimeoutPolicy --> MetricsPolicy --> ExecutorInvoker
+    end
+
+    ExecutorInvoker --> ExecutorSelector
+
+    ExecutorSelector -->|HTTP| HttpExecutor
+    ExecutorSelector -->|PowerShell| PsExecutor
+
+    subgraph PsExecutor["PowerShell Executor"]
+        PsSessionManager -->|Acquire Session| PsSession
+        PsSession -->|Allowed Cmd Mapping| PsCommand
+        PsCommand -->|Paging / Filtering| PsResult
+        PsSessionManager -->|TTL / Eviction| PsSession
+    end
+
+    HttpExecutor -->|Outbound Call| ExternalHttp
+
+    PolicyPipeline -->|Envelope| Response
+    Response --> Client
 ```
 
 ## Features
